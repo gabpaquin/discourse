@@ -5,7 +5,7 @@ namespace :bluepill do
     run "mkdir -p #{shared_path}/config"
     template "bluepill.yml.erb", "#{shared_path}/config/bluepill.yml"
   end
-  after "deploy:setup", "redis:setup"  
+  after "deploy:setup", "bluepill:setup"  
 
   desc "Start the Redis server"
   task :start do
