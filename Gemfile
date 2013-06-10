@@ -148,6 +148,7 @@ gem 'redis-rack-cache', git: 'https://github.com/SamSaffron/redis-rack-cache.git
 gem 'rack-cache', require: false
 
 gem 'rack-cors', require: false
+gem 'capistrano'
 
 # perftools only works on 1.9 atm
 group :profile do

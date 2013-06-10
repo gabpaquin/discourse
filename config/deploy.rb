@@ -17,7 +17,7 @@ load "config/recipes/redis"
 
 require 'bundler/capistrano'
 require 'sidekiq/capistrano'
-require "capistrano-rbenv"
+#require "capistrano-rbenv"
 
 # Repo Settings
 # You should change this to your fork of discourse
