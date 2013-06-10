@@ -21,7 +21,6 @@ class Topic < ActiveRecord::Base
 
   versioned if: :new_version_required?
 
-
   def trash!
     super
     update_flagged_posts_count
@@ -39,8 +38,7 @@ class Topic < ActiveRecord::Base
   before_validation :sanitize_title
 
   validates :title, :presence => true,
-                    :length => {  :in => SiteSetting.topic_title_length,
-                                  :allow_blank => true },
+                    :topic_title_length => true,
                     :quality_title => { :unless => :private_message? },
                     :unique_among  => { :unless => Proc.new { |t| (SiteSetting.allow_duplicate_topic_titles? || t.private_message?) },
                                         :message => :has_already_been_used,
@@ -48,7 +46,7 @@ class Topic < ActiveRecord::Base
                                         :case_sensitive => false,
                                         :collection => Proc.new{ Topic.listable_topics } }
 
-  after_validation do
+  before_validation do
     self.title = TextCleaner.clean_title(TextSentinel.title_sentinel(title).text) if errors[:title].empty?
   end
 
@@ -94,6 +92,23 @@ class Topic < ActiveRecord::Base
 
   scope :by_newest, order('topics.created_at desc, topics.id desc')
 
+  scope :visible, where(visible: true)
+
+  scope :created_since, lambda { |time_ago| where('created_at > ?', time_ago) }
+
+  scope :secured, lambda {|guardian|
+    ids = guardian.secure_category_ids if guardian
+    condition =
+      if ids.present?
+        ["NOT c.secure or c.id in (:cats)", cats: ids]
+      else
+        ["NOT c.secure"]
+      end
+      where("category_id IS NULL OR category_id IN (
+                SELECT c.id FROM categories c
+                WHERE #{condition[0]})", condition[1])
+   }
+
   # Helps us limit how many favorites can be made in a day
   class FavoriteLimiter < RateLimiter
     def initialize(user)
@@ -105,8 +120,7 @@ class Topic < ActiveRecord::Base
     self.bumped_at ||= Time.now
     self.last_post_user_id ||= user_id
     if !@ignore_category_auto_close and self.category and self.category.auto_close_days and self.auto_close_at.nil?
-      self.auto_close_at = self.category.auto_close_days.days.from_now
-      self.auto_close_user = (self.user.staff? ? self.user : Discourse.system_user)
+      set_auto_close(self.category.auto_close_days)
     end
   end
 
@@ -122,6 +136,7 @@ class Topic < ActiveRecord::Base
 
   before_save do
     if (auto_close_at_changed? and !auto_close_at_was.nil?) or (auto_close_user_id_changed? and auto_close_at)
+      self.auto_close_started_at ||= Time.zone.now
       Jobs.cancel_scheduled_job(:close_topic, {topic_id: id})
       true
     end
@@ -131,6 +146,10 @@ class Topic < ActiveRecord::Base
     if auto_close_at and (auto_close_at_changed? or auto_close_user_id_changed?)
       Jobs.enqueue_at(auto_close_at, :close_topic, {topic_id: id, user_id: auto_close_user_id || user_id})
     end
+  end
+
+  def best_post
+    posts.order('score desc').limit(1).first
   end
 
   # all users (in groups or directly targetted) that are going to get the pm
@@ -167,15 +186,15 @@ class Topic < ActiveRecord::Base
     title_changed? || category_id_changed?
   end
 
-  # Returns new topics since a date for display in email digest.
-  def self.new_topics(since)
+  # Returns hot topics since a date for display in email digest.
+  def self.for_digest(user, since)
     Topic
       .visible
+      .secured(Guardian.new(user))
       .where(closed: false, archived: false)
       .created_since(since)
       .listable_topics
-      .topic_list_order
-      .includes(:user)
+      .order(:percent_rank)
       .limit(5)
   end
 
@@ -193,6 +212,10 @@ class Topic < ActiveRecord::Base
     @post_numbers ||= posts.order(:post_number).pluck(:post_number)
   end
 
+  def age_in_days
+    ((Time.zone.now - created_at) / 1.day).round
+  end
+
   def has_meta_data_boolean?(key)
     meta_data_string(key) == 'true'
   end
@@ -202,36 +225,12 @@ class Topic < ActiveRecord::Base
     meta_data[key.to_s]
   end
 
-  def self.visible
-    where(visible: true)
-  end
-
-  def self.created_since(time_ago)
-    where("created_at > ?", time_ago)
-  end
-
   def self.listable_count_per_day(sinceDaysAgo=30)
     listable_topics.where('created_at > ?', sinceDaysAgo.days.ago).group('date(created_at)').order('date(created_at)').count
   end
 
   def private_message?
     archetype == Archetype.private_message
-  end
-
-  def links_grouped
-    exec_sql("SELECT ftl.url,
-                     ft.title,
-                     ftl.link_topic_id,
-                     ftl.reflection,
-                     ftl.internal,
-                     MIN(ftl.user_id) AS user_id,
-                     SUM(clicks) AS clicks
-              FROM topic_links AS ftl
-                LEFT OUTER JOIN topics AS ft ON ftl.link_topic_id = ft.id
-              WHERE ftl.topic_id = ?
-              GROUP BY ftl.url, ft.title, ftl.link_topic_id, ftl.reflection, ftl.internal
-              ORDER BY clicks DESC",
-              id).to_a
   end
 
   # Search for similar topics
@@ -249,29 +248,8 @@ class Topic < ActiveRecord::Base
          .all
   end
 
-  def update_status(property, status, user)
-    Topic.transaction do
-
-      # Special case: if it's pinned, update that
-      if property.to_sym == :pinned
-        update_pinned(status)
-      else
-        # otherwise update the column
-        update_column(property == 'autoclosed' ? 'closed' : property, status)
-      end
-
-      key = "topic_statuses.#{property}_"
-      key << (status ? 'enabled' : 'disabled')
-
-      opts = {}
-
-      # We don't bump moderator posts except for the re-open post.
-      opts[:bump] = true if (property == 'closed' or property == 'autoclosed') and (!status)
-
-      message = property != 'autoclosed' ? I18n.t(key) : I18n.t(key, count: (((self.auto_close_at||Time.zone.now) - self.created_at) / 86_400).round )
-
-      add_moderator_post(user, message, opts)
-    end
+  def update_status(status, enabled, user)
+    TopicStatusUpdate.new(self, user).update! status, enabled
   end
 
   # Atomically creates the next post number
@@ -530,6 +508,7 @@ class Topic < ActiveRecord::Base
     TopicUser.starred_since(sinceDaysAgo).by_date_starred.count
   end
 
+  # Even if the slug column in the database is null, topic.slug will return something:
   def slug
     unless slug = read_attribute(:slug)
       return '' unless title.present?
@@ -619,8 +598,23 @@ class Topic < ActiveRecord::Base
 
   def auto_close_days=(num_days)
     @ignore_category_auto_close = true
+    set_auto_close(num_days)
+  end
+
+  def set_auto_close(num_days, by_user=nil)
     num_days = num_days.to_i
     self.auto_close_at = (num_days > 0 ? num_days.days.from_now : nil)
+    if num_days > 0
+      self.auto_close_started_at ||= Time.zone.now
+      if by_user and by_user.staff?
+        self.auto_close_user = by_user
+      else
+        self.auto_close_user ||= (self.user.staff? ? self.user : Discourse.system_user)
+      end
+    else
+      self.auto_close_started_at = nil
+    end
+    self
   end
 
   def secure_category?
@@ -677,6 +671,7 @@ end
 #  slug                    :string(255)
 #  auto_close_at           :datetime
 #  auto_close_user_id      :integer
+#  auto_close_started_at   :datetime
 #
 # Indexes
 #

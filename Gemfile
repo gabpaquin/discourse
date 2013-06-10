@@ -33,8 +33,6 @@ gem 'image_optim'
 # note: for image_sorcery to correctly work you need
 # sudo apt-get install -y imagemagick
 gem 'image_sorcery'
-# it patches stuff, I think we need it in prd
-gem 'jquery-rails'
 gem 'multi_json'
 gem 'mustache'
 gem 'nokogiri'
@@ -45,6 +43,7 @@ gem 'omniauth-facebook'
 gem 'omniauth-twitter'
 gem 'omniauth-github'
 gem 'omniauth-browserid', git: 'https://github.com/callahad/omniauth-browserid.git', branch: 'observer_api'
+gem 'omniauth-cas'
 gem 'oj'
 gem 'pg'
 # we had pain with the 3.2.13 upgrade so monkey patch the security fix
@@ -59,12 +58,14 @@ gem 'sanitize'
 gem 'sass'
 gem 'seed-fu'
 gem 'sidekiq'
+gem 'sidekiq-failures'
 gem 'sinatra', require: nil
 gem 'slim'  # required for sidekiq-web
 gem 'strong_parameters' # remove when we upgrade to Rails 4
 gem 'therubyracer', require: 'v8'
 gem 'thin'
 gem 'diffy', require: false
+gem 'highline', require: false
 
 # Gem that enables support for plugins. It is required.
 gem 'discourse_plugin', path: 'vendor/gems/discourse_plugin'

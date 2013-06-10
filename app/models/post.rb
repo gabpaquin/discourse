@@ -4,6 +4,7 @@ require_dependency 'rate_limiter'
 require_dependency 'post_revisor'
 require_dependency 'enum'
 require_dependency 'trashable'
+require_dependency 'post_analyzer'
 
 require 'archetype'
 require 'digest/sha1'
@@ -29,26 +30,22 @@ class Post < ActiveRecord::Base
 
   validates_presence_of :raw, :user_id, :topic_id
   validates :raw, stripped_length: { in: -> { SiteSetting.post_length } }
-  validate :raw_quality
-  validate :max_mention_validator
-  validate :max_images_validator
-  validate :max_links_validator
-  validate :unique_post_validator
+  validates_with PostValidator
 
   # We can pass a hash of image sizes when saving to prevent crawling those images
   attr_accessor :image_sizes, :quoted_post_numbers, :no_bump, :invalidate_oneboxes
 
   SHORT_POST_CHARS = 1200
 
-  scope :by_newest, order('created_at desc, id desc')
-  scope :by_post_number, order('post_number ASC')
-  scope :with_user, includes(:user)
+  scope :by_newest, -> { order('created_at desc, id desc') }
+  scope :by_post_number, -> { order('post_number ASC') }
+  scope :with_user, -> { includes(:user) }
   scope :public_posts, -> { joins(:topic).where('topics.archetype <> ?', Archetype.private_message) }
   scope :private_posts, -> { joins(:topic).where('topics.archetype = ?', Archetype.private_message) }
   scope :with_topic_subtype, ->(subtype) { joins(:topic).where('topics.subtype = ?', subtype) }
 
   def self.hidden_reasons
-    @hidden_reasons ||= Enum.new(:flag_threshold_reached, :flag_threshold_reached_again)
+    @hidden_reasons ||= Enum.new(:flag_threshold_reached, :flag_threshold_reached_again, :new_user_spam_threshold_reached)
   end
 
   def self.types
@@ -58,24 +55,6 @@ class Post < ActiveRecord::Base
   def recover!
     super
     update_flagged_posts_count
-  end
-
-  def raw_quality
-    sentinel = TextSentinel.body_sentinel(raw)
-    errors.add(:raw, I18n.t(:is_invalid)) unless sentinel.valid?
-  end
-
-  # Stop us from posting the same thing too quickly
-  def unique_post_validator
-    return if SiteSetting.unique_posts_mins == 0
-    return if acting_user.admin? || acting_user.moderator?
-
-    # If the post is empty, default to the validates_presence_of
-    return if raw.blank?
-
-    if $redis.exists(unique_post_key)
-      errors.add(:raw, I18n.t(:just_posted_that))
-    end
   end
 
   # The key we use in redis to ensure unique posts
@@ -88,11 +67,6 @@ class Post < ActiveRecord::Base
     Digest::SHA1.hexdigest(raw.gsub(/\s+/, "").downcase)
   end
 
-  def cooked_document
-    self.cooked ||= cook(raw, topic_id: topic_id)
-    @cooked_document ||= Nokogiri::HTML.fragment(cooked)
-  end
-
   def reset_cooked
     @cooked_document = nil
     self.cooked = nil
@@ -102,41 +76,20 @@ class Post < ActiveRecord::Base
     @white_listed_image_classes ||= ['avatar', 'favicon', 'thumbnail']
   end
 
-  # How many images are present in the post
-  def image_count
-    return 0 unless raw.present?
-
-    cooked_document.search("img").reject do |t|
-      dom_class = t["class"]
-      if dom_class
-        (Post.white_listed_image_classes & dom_class.split(" ")).count > 0
-      end
-    end.count
+  def post_analyzer
+    @post_analyzer = PostAnalyzer.new(raw, topic_id)
   end
 
-  # Returns an array of all links in a post
-  def raw_links
-    return [] unless raw.present?
-
-    return @raw_links if @raw_links.present?
-
-    # Don't include @mentions in the link count
-    @raw_links = []
-    cooked_document.search("a[href]").each do |l|
-      html_class = l.attributes['class']
-      url = l.attributes['href'].to_s
-      if html_class.present?
-        next if html_class.to_s == 'mention' && l.attributes['href'].to_s =~ /^\/users\//
-      end
-      @raw_links << url
+  %w{raw_mentions linked_hosts image_count link_count raw_links}.each do |attr|
+    define_method(attr) do
+      PostAnalyzer.new(raw, topic_id).send(attr)
     end
-    @raw_links
   end
 
-  # How many links are present in the post
-  def link_count
-    raw_links.size
+  def cook(*args)
+    PostAnalyzer.new(raw, topic_id).cook(*args)
   end
+
 
   # Sometimes the post is being edited by someone else, for example, a mod.
   # If that's the case, they should not be bound by the original poster's
@@ -147,41 +100,6 @@ class Post < ActiveRecord::Base
 
   def acting_user=(pu)
     @acting_user = pu
-  end
-
-  # Ensure maximum amount of mentions in a post
-  def max_mention_validator
-    if acting_user_is_trusted?
-      add_error_if_count_exceeded(:too_many_mentions, raw_mentions.size, SiteSetting.max_mentions_per_post)
-    else
-      add_error_if_count_exceeded(:too_many_mentions_newuser, raw_mentions.size, SiteSetting.newuser_max_mentions_per_post)
-    end
-  end
-
-  # Ensure new users can not put too many images in a post
-  def max_images_validator
-    add_error_if_count_exceeded(:too_many_images, image_count, SiteSetting.newuser_max_images) unless acting_user_is_trusted?
-  end
-
-  # Ensure new users can not put too many links in a post
-  def max_links_validator
-    add_error_if_count_exceeded(:too_many_links, link_count, SiteSetting.newuser_max_links) unless acting_user_is_trusted?
-  end
-
-
-  # Count how many hosts are linked in the post
-  def linked_hosts
-    return {} if raw_links.blank?
-
-    return @linked_hosts if @linked_hosts.present?
-
-    @linked_hosts = {}
-    raw_links.each do |u|
-      uri = URI.parse(u)
-      host = uri.host
-      @linked_hosts[host] ||= 1
-    end
-    @linked_hosts
   end
 
   def total_hosts_usage
@@ -206,23 +124,6 @@ class Post < ActiveRecord::Base
     end
 
     false
-  end
-
-
-  def raw_mentions
-    return [] if raw.blank?
-
-    # We don't count mentions in quotes
-    return @raw_mentions if @raw_mentions.present?
-    raw_stripped = raw.gsub(/\[quote=(.*)\]([^\[]*?)\[\/quote\]/im, '')
-
-    # Strip pre and code tags
-    doc = Nokogiri::HTML.fragment(raw_stripped)
-    doc.search("pre").remove
-    doc.search("code").remove
-
-    results = doc.to_html.scan(PrettyText.mention_matcher)
-    @raw_mentions = results.uniq.map { |un| un.first.downcase.gsub!(/^@/, '') }
   end
 
   def archetype
@@ -290,20 +191,6 @@ class Post < ActiveRecord::Base
     Post.excerpt(cooked, maxlength, options)
   end
 
-  # What we use to cook posts
-  def cook(*args)
-    cooked = PrettyText.cook(*args)
-
-    # If we have any of the oneboxes in the cache, throw them in right away, don't
-    # wait for the post processor.
-    dirty = false
-    result = Oneboxer.apply(cooked) do |url, elem|
-      Oneboxer.render_from_cache(url)
-    end
-
-    cooked = result.to_html if result.changed?
-    cooked
-  end
 
   # A list of versions including the initial version
   def all_versions
@@ -363,35 +250,14 @@ class Post < ActiveRecord::Base
     PostRevisor.new(self).revise!(updated_by, new_raw, opts)
   end
 
-
-  # TODO: move into PostCreator
-  # Various callbacks
   before_create do
-    if reply_to_post_number.present?
-      self.reply_to_user_id ||= Post.select(:user_id).where(topic_id: topic_id, post_number: reply_to_post_number).first.try(:user_id)
-    end
-
-    self.post_number ||= Topic.next_post_number(topic_id, reply_to_post_number.present?)
-    self.cooked ||= cook(raw, topic_id: topic_id)
-    self.sort_order = post_number
-    DiscourseEvent.trigger(:before_create_post, self)
-    self.last_version_at ||= Time.now
+    PostCreator.before_create_tasks(self)
   end
 
   # TODO: Move some of this into an asynchronous job?
   # TODO: Move into PostCreator
   after_create do
-    # Update attributes on the topic - featured users and last posted.
-    attrs = {last_posted_at: created_at, last_post_user_id: user_id}
-    attrs[:bumped_at] = created_at unless no_bump
-    topic.update_attributes(attrs)
-
-    # Update topic user data
-    TopicUser.change(user,
-                     topic.id,
-                     posted: true,
-                     last_read_post_number: post_number,
-                     seen_post_count: post_number)
+    PostCreator.after_create_tasks(self)
   end
 
   # This calculates the geometric mean of the post timings and stores it along with
@@ -471,13 +337,7 @@ class Post < ActiveRecord::Base
 
   private
 
-  def acting_user_is_trusted?
-    acting_user.present? && acting_user.has_trust_level?(:basic)
-  end
 
-  def add_error_if_count_exceeded(key_for_translation, current_count, max_count)
-    errors.add(:base, I18n.t(key_for_translation, count: max_count)) if current_count > max_count
-  end
 
   def parse_quote_into_arguments(quote)
     return {} unless quote.present?

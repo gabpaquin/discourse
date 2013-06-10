@@ -441,7 +441,6 @@ it:
     post_excerpt_maxlength: "Lunghezza massima dell'estratto di un post (caratteri)"
     post_onebox_maxlength: "Lunghezza massima di un post oneboxed (caratteri)"
     category_post_template: "Il template utilizzato durante la creazione di una nuova categoria"
-    new_topics_rollup: "Quanti nuovi topic possono essere inseriti nella lista dei topic prima di essere raggruppati in un counter"
     onebox_max_chars: "Massimo numero di caratteri che un onebox importa da un sito esterno all'interno di un post"
 
     logo_url: "Il logo del tuo sito es: http://example.com/logo.png"
@@ -765,19 +764,6 @@ it:
         - Per cercare, vedere il tuo profilo e per altri contenuti, clicca le icone in alto a destra.
 
         - Mentre leggi un topic, puoi tornare in cima cliccando il titolo all'inizio della pagina. Per raggiungere il *fondo* invece, clicca la freccia in basso nella progress bar situata in fondo alla pagina, o clicca il campo ultimo post nel sommario presente nel primo post.
-
-    welcome_approved:
-      subject_template: "Il tuo account è stato approvato su %{site_name}!"
-      text_body_template: |
-        Congratulazioni!
-
-        Il tuo account è stato approvato per accedere su %{site_name}, benvenuto nel nostro forum!
-
-        %{new_user_tips}
-
-        Crediamo nel [comportamento civilizzato della community](%{base_url}/faq) in ogni momento.
-
-        Goditi la permanenza!
 
     welcome_user:
       subject_template: "Benvenuto su %{site_name}!"

@@ -10,6 +10,15 @@ class UserNotifications < ActionMailer::Base
     build_email(user.email, "user_notifications.signup", email_token: opts[:email_token])
   end
 
+  def signup_after_approval(user, opts={})
+    build_email(
+      user.email,
+      'user_notifications.signup_after_approval',
+      email_token: opts[:email_token],
+      new_user_tips: SiteContent.content_for(:usage_tips)
+    )
+  end
+
   def authorize_email(user, opts={})
     build_email(user.email, "user_notifications.authorize_email", email_token: opts[:email_token])
   end
@@ -25,7 +34,7 @@ class UserNotifications < ActionMailer::Base
                 "user_notifications.private_message",
                 message: post.raw,
                 url: post.url,
-                subject_prefix: post.post_number != 1 ? "re: " : "",
+                subject_prefix: "[#{I18n.t('private_message_abbrev')}] #{post.post_number != 1 ? 're: ' : ''}",
                 topic_title: post.topic.title,
                 private_message_from: post.user.name,
                 from: "#{I18n.t(:via, username: post.user.name, site_name: SiteSetting.title)} <#{SiteSetting.notification_email}>",
@@ -36,20 +45,18 @@ class UserNotifications < ActionMailer::Base
     @user = user
     @base_url = Discourse.base_url
 
-    min_date = @user.last_emailed_at || @user.last_seen_at || 1.month.ago
+    min_date = opts[:since] || @user.last_emailed_at || @user.last_seen_at || 1.month.ago
 
     @site_name = SiteSetting.title
 
     @last_seen_at = I18n.l(@user.last_seen_at || @user.created_at, format: :short)
 
-    # A list of new topics to show the user
-    @new_topics = Topic.new_topics(min_date)
-    @notifications = @user.notifications.interesting_after(min_date)
-
+    # A list of topics to show the user
+    @new_topics = Topic.for_digest(user, min_date)
     @markdown_linker = MarkdownLinker.new(Discourse.base_url)
 
     # Don't send email unless there is content in it
-    if @new_topics.present? || @notifications.present?
+    if @new_topics.present?
       mail to: user.email,
            from: "#{I18n.t('user_notifications.digest.from', site_name: SiteSetting.title)} <#{SiteSetting.notification_email}>",
            subject: I18n.t('user_notifications.digest.subject_template',

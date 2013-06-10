@@ -41,6 +41,11 @@ class TopicList
     return @topics
   end
 
+  def topic_ids
+    return [] if @topics_input.blank?
+    @topics_input.map {|t| t.id}
+  end
+
   def filter_summary
     @filter_summary ||= get_summary
   end
@@ -52,7 +57,7 @@ class TopicList
   def has_rank_details?
 
     # Only moderators can see rank details
-    return false unless @current_user.try(:moderator?)
+    return false unless @current_user.try(:staff?)
 
     # Only show them on 'Hot'
     return @filter == :hot
