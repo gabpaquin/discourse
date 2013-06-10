@@ -45,6 +45,6 @@ set :application, 'discourse'
 set :deploy_to, "/home/#{user}/apps/#{application}"
 
 # Perform an initial bundle
-after "deploy:setup" do
-  run "cd #{current_path} && bundle install"
-end
+#after "deploy:setup" do
+#  run "cd #{current_path} && bundle install"
+#end

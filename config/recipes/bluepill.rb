@@ -3,7 +3,7 @@ namespace :bluepill do
   desc "Generate the database.yml configuration file."
   task :setup, roles: :app do
     run "mkdir -p #{shared_path}/config"
-    template "bluepill.yml.erb", "#{shared_path}/config/bluepill.yml"
+    template "discourse.pill.erb", "#{shared_path}/config/discourse.pill"
   end
   after "deploy:setup", "bluepill:setup"  
 
