@@ -7,7 +7,7 @@ num_webs = ENV["NUM_WEBS"].to_i > 0 ? ENV["NUM_WEBS"].to_i : 4
 
 # to debug use
 #Bluepill.application("#<%={application}%>", :foreground => true) do |app|
-Bluepill.application("#<%={application}%>", :base_dir => ENV["HOME"] + '/.bluepill') do |app|
+Bluepill.application("discourse", :base_dir => ENV["HOME"] + '/.bluepill') do |app|
 
   app.gid = group
   app.uid = user
