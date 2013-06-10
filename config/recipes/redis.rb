@@ -23,6 +23,12 @@ namespace :redis do
   end
   after "deploy:setup", "redis:setup"  
 
+  desc "Symlink the redis.yml file into latest release"
+  task :symlink, roles: :app do
+    run "ln -nfs #{shared_path}/config/redis.yml #{release_path}/config/redis.yml"
+  end
+  after "deploy:finalize_update", "redis:symlink"
+
   desc "Start the Redis server"
   task :start do
     run "redis-server /etc/redis.conf"

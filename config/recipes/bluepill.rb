@@ -7,6 +7,12 @@ namespace :bluepill do
   end
   after "deploy:setup", "bluepill:setup"  
 
+  desc "Symlink the database.yml file into latest release"
+  task :symlink, roles: :app do
+    run "ln -nfs #{shared_path}/config/discourse.pill #{release_path}/config/discourse.pill"
+  end
+  after "deploy:finalize_update", "bluepill:symlink"  
+
   desc "Start the Redis server"
   task :start do
     run "redis-server /etc/redis.conf"
