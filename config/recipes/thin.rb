@@ -4,7 +4,7 @@ set_default(:thin_log) { "#{shared_path}/log/thin.log" }
 set_default(:thin_socket) { "#{current_path}/tmp/thin.sock" }
 
 # Tasks to start/stop/restart thin
-namespace :deploy do
+namespace :thin do
   desc "Setup Unicorn initializer and app configuration"
   task :setup, roles: :app do
     run "mkdir -p #{shared_path}/config"
