@@ -1,4 +1,4 @@
-pstream discourse {
+upstream discourse {
   server unix:/tmp/sockets/thin.0.sock fail_timeout=0;
   server unix:/tmp/sockets/thin.1.sock fail_timeout=0;
   server unix:/tmp/sockets/thin.2.sock fail_timeout=0;
