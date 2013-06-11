@@ -149,7 +149,6 @@ gem 'rack-cache', require: false
 
 gem 'rack-cors', require: false
 gem 'capistrano'
-gem 'rb-readline'
 
 # perftools only works on 1.9 atm
 group :profile do
