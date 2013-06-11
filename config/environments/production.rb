@@ -38,8 +38,8 @@ Discourse::Application.configure do
     password: "16da33c7-490d-492e-960b-510d594b2b88"
   }
 
-  config.action_mailer.delivery_method = :sendmail
-  config.action_mailer.sendmail_settings = {arguments: '-i'}
+  #config.action_mailer.delivery_method = :sendmail
+  #config.action_mailer.sendmail_settings = {arguments: '-i'}
 
   # Send deprecation notices to registered listeners
   config.active_support.deprecation = :notify
