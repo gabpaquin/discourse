@@ -12,6 +12,12 @@ namespace :thin do
   end
   after "deploy:setup", "thin:setup"
 
+  desc "Symlink the thin.yml file into latest release"
+  task :symlink, roles: :app do
+    run "ln -nfs #{shared_path}/config/thin.yml #{release_path}/config/thin.yml"
+  end
+  after "deploy:finalize_update", "thin:symlink"
+
 
   desc 'Start thin servers'
   task :start, :roles => :app, :except => { :no_release => true } do
